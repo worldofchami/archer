@@ -2,6 +2,7 @@ package main
 
 import (
 	// "context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/v5/middleware"
@@ -23,6 +25,12 @@ type HTTPHandlerFunc = func(http.ResponseWriter, *http.Request)
 func handleFatal(err error) {
 	if err != nil {
 		panic(err)
+	}
+}
+
+func handleGraceful(err error) {
+	if err != nil {
+		log.Print(err)
 	}
 }
 
@@ -54,9 +62,67 @@ func Login(clientId string) HTTPHandlerFunc {
 	}
 }
 
-func Callback() HTTPHandlerFunc {
+func Callback(clientId, clientSecret string) HTTPHandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("code")
+		stored_state, err := r.Cookie("stateKey")
 
+		if state == "" || err != nil || state != stored_state.Value {
+			http.Redirect(w, r, "/error?error=state_mismatch", http.StatusFound)
+		} else {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "stateKey",
+				Value:    "",
+				Path:     "/",
+				Expires: time.Unix(0, 0),
+				HttpOnly: true,
+			})
+
+			http_client := &http.Client{}
+
+			query_url, _ := url.Parse("https://accounts.spotify.com/api/token")
+			
+			var buffer bytes.Buffer
+			buffer.WriteString(fmt.Sprintf(
+				"Basic %s:%s",
+				clientId,
+				clientSecret,
+			))
+
+			post_req := &http.Request{
+				Method: "POST",
+				URL: query_url,
+				Form: map[string][]string{
+					"code": { code },
+					"redirect_url": { "http://localhost:8080/callback" },
+					"grant_type": { "authorization_code" },
+				},
+				Header: map[string][]string{
+					"Content-Type": { "application/x-www-form-urlencoded" },
+					"Authorization": { buffer.String() },
+				},
+			}
+
+			res, err := http_client.Do(post_req)
+			handleGraceful(err)
+
+			defer res.Body.Close()
+
+			if res.StatusCode == 200 {
+				token_info, err := io.ReadAll(res.Body)
+				handleGraceful(err)
+
+				var authResponse AuthResponse
+
+				json.Unmarshal(token_info, &authResponse)
+
+				// Stopped here
+				// get_req := &http.Request{
+
+				// }
+			}
+		}
 	}
 }
 
@@ -65,17 +131,14 @@ func main() {
 	handleFatal(err)
 
 	clientId := os.Getenv("SPOTIFY_ID")
-	// secret := os.Getenv("SPOTIFY_SECRET")
+	clientSecret := os.Getenv("SPOTIFY_SECRET")
 
-	httpClient := &http.Client{}
+	http_client := &http.Client{}
 
-	res, err := httpClient.Do(&http.Request{
+	url, _ := url.Parse("http://localhost:8080/test")
+	res, err := http_client.Do(&http.Request{
 		Method: "GET",
-		URL: &url.URL{
-			Host: "localhost:8080",
-			Path: "/test",
-			Scheme: "http",
-		},
+		URL: url,
 	})
 	handleFatal(err)
 
@@ -94,6 +157,7 @@ func main() {
 	r.Use(middleware.Logger)
 
 	r.Get("/login", Login(clientId))
+	r.Get("/callback", Callback(clientId, clientSecret))
 
 	// ctx := context.Background()
 
