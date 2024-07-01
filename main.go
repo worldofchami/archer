@@ -49,15 +49,11 @@ type HTTPHandlerFunc = func(http.ResponseWriter, *http.Request)
 
 func handleFatal(err error) {
 	if err != nil {
-		logs_file, err := os.Open("./logs.txt")
-		handleFatal(err)
-
-		_, err = logs_file.WriteString(fmt.Sprintf(
-			"ERROR: %s - %s",
-			time.Now().Format("YYYY:MM:DD hh:mm:SS"),
+		os.WriteFile("./logs.txt", []byte(fmt.Sprintf(
+			"TERMINATED: %s - %s\n",
+			time.Now().Format(time.ANSIC),
 			err,
-		))
-		handleFatal(err)
+		)), 0644)
 
 		panic(err)
 	}
@@ -65,15 +61,11 @@ func handleFatal(err error) {
 
 func handleGraceful(err error) {
 	if err != nil {
-		logs_file, err := os.Open("./logs.txt")
-		handleFatal(err)
-
-		_, err = logs_file.WriteString(fmt.Sprintf(
-			"PROGRAM TERMINATED: %s - %s",
-			time.Now().Format("YYYY:MM:DD hh:mm:SS"),
+		os.WriteFile("./logs.txt", []byte(fmt.Sprintf(
+			"ERROR: %s - %s\n",
+			time.Now().Format(time.ANSIC),
 			err,
-		))
-		handleFatal(err)
+		)), 0644)
 
 		log.Print(err)
 	}
