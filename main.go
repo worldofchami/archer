@@ -1,11 +1,14 @@
 package main
 
 import (
-	"context"
+	"bytes"
+	// "context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+
+	"image/jpeg"
 	"io"
 	"log"
 	"math/big"
@@ -22,11 +25,11 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/joho/godotenv"
+	// "github.com/joho/godotenv"
 	"github.com/rivo/tview"
 	"github.com/zmb3/spotify"
-	spotifyauth "github.com/zmb3/spotify/v2/auth"
-	"golang.org/x/oauth2"
+	// spotifyauth "github.com/zmb3/spotify/v2/auth"
+	// "golang.org/x/oauth2"
 )
 
 // https://gist.github.com/sevkin/9798d67b2cb9d07cb05f89f14ba682f8
@@ -281,57 +284,56 @@ func concatArtists(artists []spotify.SimpleArtist) string {
 }
 
 func main() {
-	err := godotenv.Load(".env")
-	handleFatal(err)
-
-	clientId := os.Getenv("SPOTIFY_ID")
-	clientSecret := os.Getenv("SPOTIFY_SECRET")
-
-	authResponse := make(chan AuthResponse, 2)
-
-	go startServer(&clientId, &clientSecret, &authResponse)
-
-	var body io.Reader
-	res, err := http.NewRequest(http.MethodGet, "http://localhost:8888/login", body)
-	handleFatal(err)
-
-	defer res.Body.Close()
-
-	token := <-authResponse
-
-	// Read empty value from chan to close program
-	defer func() {
-		authResponse<-AuthResponse{}
-		<-authResponse
-	}()
-
-	ctx := context.Background()
-
-	http_client := spotifyauth.Authenticator{}.Client(ctx, &oauth2.Token{
-		AccessToken: token.AccessToken,
-		TokenType: "Bearer",
-		RefreshToken: token.RefreshToken,
-	})
-	
-	client := spotify.NewClient(http_client)
-
-	curr_playing, err := client.PlayerCurrentlyPlaying()
-	handleFatal(err)
-
-	artists_str := concatArtists(curr_playing.Item.Artists)
-	song_name := curr_playing.Item.Name
-
-	
-	// res, err = http.Get("https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
-    // handleFatal(err)
-
-    // defer res.Body.Close()
-
-	// cover, err := jpeg.Decode(res.Body)
+	// err := godotenv.Load(".env")
 	// handleFatal(err)
 
-	// song_name := "King James"
-	// artists_str := "Anderson .Paak"
+	// clientId := os.Getenv("SPOTIFY_ID")
+	// clientSecret := os.Getenv("SPOTIFY_SECRET")
+
+	// authResponse := make(chan AuthResponse, 2)
+
+	// go startServer(&clientId, &clientSecret, &authResponse)
+
+	// res, err := http.Get("http://localhost:8888/login")
+	// handleFatal(err)
+
+	// defer res.Body.Close()
+
+	// token := <-authResponse
+
+	// // Read empty value from chan to close program
+	// defer func() {
+	// 	authResponse<-AuthResponse{}
+	// 	<-authResponse
+	// }()
+
+	// ctx := context.Background()
+	
+	// client := spotify.NewClient(http_client)
+
+	// curr_playing, err := client.PlayerCurrentlyPlaying()
+	// handleFatal(err)
+
+	// artists_str := concatArtists(curr_playing.Item.Artists)
+	// song_name := curr_playing.Item.Name
+
+	curr_playing := &spotify.CurrentlyPlaying{}
+	client := spotify.Client{}
+
+	res, err := http.Get("https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
+    handleFatal(err)
+
+    defer res.Body.Close()
+
+	bin_data, err := io.ReadAll(res.Body)
+	handleGraceful(err)
+
+	cover := tview.NewImage()
+	photo, _ := jpeg.Decode(bytes.NewReader(bin_data))
+	cover.SetImage(photo).SetColors(tview.TrueColor).SetAspectRatio(1)
+
+	song_name := "King James"
+	artists_str := "Anderson .Paak"
 
 	app := tview.NewApplication()
 
@@ -411,8 +413,12 @@ func main() {
 				1, 1, false,
 			).
 			AddItem(
-				tview.NewImage().SetAspectRatio(1).SetBorder(true),
-				0, 1, false,
+				cover,
+				20, 3, false,
+			).
+			AddItem(
+				tview.NewFlex(),
+				1, 1, false,
 			).
 			AddItem(
 				tview.NewFlex().SetDirection(tview.FlexColumnCSS).
