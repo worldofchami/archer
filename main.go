@@ -66,8 +66,6 @@ func handleGraceful(err error) {
 			time.Now().Format(time.ANSIC),
 			err,
 		)), 0644)
-
-		log.Print(err)
 	}
 }
 
@@ -198,6 +196,78 @@ func startServer(clientId, clientSecret *string, authResponse *chan AuthResponse
 	http.ListenAndServe(":8888", r)
 }
 
+var (
+	FOCUS_STYLE=tcell.Style{}.Background(tcell.Color(tcell.NewRGBColor(238, 255, 0)))
+	BLUR_STYLE=tcell.Style{}.Background(tcell.Color(tcell.NewRGBColor(0, 0, 0)))
+)
+
+func refreshPlayer(player *spotify.CurrentlyPlaying, client *spotify.Client) *spotify.CurrentlyPlaying {
+	p, err := client.PlayerCurrentlyPlaying()
+	handleFatal(err)
+	*player = *p
+
+	return player
+}
+
+func pause(curr_playing *spotify.CurrentlyPlaying, client *spotify.Client) func() {
+	return func() {
+		state, err := client.PlayerState()
+		handleGraceful(err)
+
+		if state.CurrentlyPlaying.Playing {
+			err := client.Pause()
+			handleGraceful(err)
+		} else {
+			err := client.Play()
+			handleGraceful(err)
+		}
+
+		refreshPlayer(curr_playing, client)
+	}
+}
+
+func next(curr_playing *spotify.CurrentlyPlaying, song_name_text_view *tview.TextView, artists_text_view *tview.TextView, client *spotify.Client) func() {
+	return func() {
+		err := client.Next()
+		handleGraceful(err)
+
+		player := refreshPlayer(curr_playing, client)
+		updateTextView(player.Item.Name, song_name_text_view)
+		updateTextView(concatArtists(player.Item.Artists), artists_text_view)
+	}
+}
+
+func prev(curr_playing *spotify.CurrentlyPlaying, song_name_text_view *tview.TextView, artists_text_view *tview.TextView, client *spotify.Client) func() {
+	return func() {
+		err := client.Previous()
+		handleGraceful(err)
+
+		player := refreshPlayer(curr_playing, client)
+		updateTextView(player.Item.Name, song_name_text_view)
+		updateTextView(concatArtists(player.Item.Artists), artists_text_view)
+	}
+}
+
+func updateTextView(text string, tv *tview.TextView) {
+	w := tv.BatchWriter()
+	defer w.Close()
+
+	w.Clear()
+	w.Write([]byte(text))
+}
+
+func concatArtists(artists []spotify.SimpleArtist) string {
+	artists_str := ""
+
+	for _, artist := range(artists[:len(artists)-1]) {
+		artists_str += artist.Name + ", "
+	}
+
+	artists_str += artists[len(artists)-1].Name
+
+	return artists_str
+}
+
 func main() {
 	err := godotenv.Load(".env")
 	handleFatal(err)
@@ -242,17 +312,10 @@ func main() {
 	curr_playing, err := client.PlayerCurrentlyPlaying()
 	handleFatal(err)
 
-	artists := curr_playing.Item.Artists
-	var artists_str string
-
-	for _, artist := range(artists[:len(artists)-1]) {
-		artists_str += artist.Name + ", "
-	}
-
-	artists_str += artists[len(artists)-1].Name
-
+	artists_str := concatArtists(curr_playing.Item.Artists)
 	song_name := curr_playing.Item.Name
 
+	
 	// res, err = http.Get("https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
     // handleFatal(err)
 
@@ -265,6 +328,72 @@ func main() {
 	// artists_str := "Anderson .Paak"
 
 	app := tview.NewApplication()
+
+	const (
+		NONE=0
+		PREV=1
+		PAUSE=2
+		NEXT=3
+	)
+
+	focused_control := NONE
+
+	buttons := []*tview.Button{
+		tview.NewButton("<"),
+		tview.NewButton("P"),
+		tview.NewButton(">"),
+	}
+
+	song_name_text_view := tview.NewTextView().SetText(song_name).SetTextAlign(1).SetTextColor(tcell.Color(tcell.NewRGBColor(238, 255, 0)))
+	artists_text_view := tview.NewTextView().SetText(artists_str).SetTextAlign(1)
+
+	control_box := tview.NewBox().SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		key := event.Key()
+
+		if key == tcell.KeyTAB {
+			// Focus on next control
+			focused_control = (focused_control + 1) % 4
+
+			// TODO: try make more efficient
+			for _, button := range buttons {
+				button.SetStyle(BLUR_STYLE)
+			}
+
+			if focused_control > 0 {
+				buttons[focused_control-1].SetStyle(FOCUS_STYLE)
+			}
+		} else if key == tcell.KeyEnter {
+			// Do action for this key, set it to focused
+			switch focused_control {
+				case NEXT: {
+					next(curr_playing, song_name_text_view, artists_text_view, &client)()
+				}
+				case PREV: {
+					prev(curr_playing, song_name_text_view, artists_text_view, &client)()
+				}
+				case PAUSE: {
+					pause(curr_playing, &client)()
+				}
+			}
+		}
+		
+		return event
+	})
+
+	controls := tview.NewFlex().SetDirection(tview.FlexRowCSS).
+	AddItem(
+		buttons[0],
+		5, 1, false,
+	).
+	AddItem(
+		buttons[1],
+		5, 1, false,
+	).
+	AddItem(
+		buttons[2],
+		5, 1, false,
+	).AddItem(control_box, 0,0,false)
+
 	flex := tview.NewFlex().
 		AddItem(
 			tview.NewFlex().SetDirection(tview.FlexColumnCSS).
@@ -282,55 +411,22 @@ func main() {
 			AddItem(
 				tview.NewFlex().SetDirection(tview.FlexColumnCSS).
 				AddItem(
-					tview.NewTextView().SetText(song_name).SetTextAlign(1).SetTextColor(tcell.Color(tcell.NewRGBColor(238, 255, 0))),
+					song_name_text_view,
 					2, 2, false,
 				).
 				AddItem(
-					tview.NewTextView().SetText(artists_str).SetTextAlign(1),
+					artists_text_view,
 					1, 1, false,
 				),
 				3, 1, false,
 			).
 			AddItem(
-				tview.NewFlex().SetDirection(tview.FlexRowCSS).
-				AddItem(
-					tview.NewButton("<").SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
-						if action == tview.MouseLeftClick {
-							err := client.Previous()
-							handleGraceful(err)
-						}
-						
-						return action, event
-					}),
-					5, 1, false,
-				).
-				AddItem(
-					tview.NewButton("P").SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
-						if action == tview.MouseLeftClick {
-							err := client.Pause()
-							handleGraceful(err)
-						}
-						
-						return action, event
-					}),
-					5, 1, false,
-				).
-				AddItem(
-					tview.NewButton(">").SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
-						if action == tview.MouseLeftClick {
-							err := client.Next()
-							handleGraceful(err)
-						}
-						
-						return action, event
-					}),
-					5, 1, false,
-				),
+				controls,
 				1, 0, false,
 			),
 		0, 1, false)
 			
-	if err := app.SetRoot(flex, true).SetFocus(flex).Run(); err != nil {
+	if err := app.SetRoot(flex, true).SetFocus(control_box).Run(); err != nil {
 		panic(err)
 	}
 }
