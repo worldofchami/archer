@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"net/url"
 
@@ -74,9 +76,22 @@ type AuthResponse struct {
 	RefreshToken	string		`json:"refresh_token"`
 }
 
+func randomStr(length int) string {
+    letters := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    result := make([]byte, length)
+
+    for i := range result {
+        num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+
+        result[i] = letters[num.Int64()]
+    }
+
+    return string(result)
+}
+
 func Login(clientId string) HTTPHandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		state := "ABCDEFGHIJKLMNOP"
+		state := randomStr(16)
 		r.AddCookie(&http.Cookie{
 			Name: "spotify_auth_state",
 			Value: state,
@@ -188,9 +203,6 @@ func startServer(clientId, clientSecret *string, authResponse *chan AuthResponse
 
 	r.Get("/login", Login(*clientId))
 	r.Get("/callback", Callback(*clientId, *clientSecret, authResponse))
-	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-        fmt.Fprintln(w, "Hello, world!")
-    })
 	
 	log.Print("Listening on 8888")
 	http.ListenAndServe(":8888", r)
@@ -279,19 +291,13 @@ func main() {
 
 	go startServer(&clientId, &clientSecret, &authResponse)
 
-	url, _ := url.Parse("http://localhost:8888/login")
-
-	res, err := (&http.Client{}).Do(&http.Request{
-		Method: "GET",
-		URL: url,
-	})
+	var body io.Reader
+	res, err := http.NewRequest(http.MethodGet, "http://localhost:8888/login", body)
 	handleFatal(err)
 
 	defer res.Body.Close()
 
 	token := <-authResponse
-
-	fmt.Println(token)
 
 	// Read empty value from chan to close program
 	defer func() {
