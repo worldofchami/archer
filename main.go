@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	// "context"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -25,11 +25,11 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/v5/middleware"
 
-	// "github.com/joho/godotenv"
+	"github.com/joho/godotenv"
 	"github.com/rivo/tview"
 	"github.com/zmb3/spotify"
-	// spotifyauth "github.com/zmb3/spotify/v2/auth"
-	// "golang.org/x/oauth2"
+	spotifyauth "github.com/zmb3/spotify/v2/auth"
+	"golang.org/x/oauth2"
 )
 
 // https://gist.github.com/sevkin/9798d67b2cb9d07cb05f89f14ba682f8
@@ -241,23 +241,47 @@ func pause(curr_playing *spotify.CurrentlyPlaying, client *spotify.Client) func(
 	}
 }
 
-func next(curr_playing *spotify.CurrentlyPlaying, song_name_text_view *tview.TextView, artists_text_view *tview.TextView, client *spotify.Client) func() {
+func next(curr_playing *spotify.CurrentlyPlaying, song_name_text_view *tview.TextView, artists_text_view *tview.TextView, cover *tview.Image, client *spotify.Client) func() {
 	return func() {
 		err := client.Next()
 		handleGraceful(err)
 
 		player := refreshPlayer(curr_playing, client)
+
+		res, err := http.Get(player.Item.Album.Images[0].URL)//"https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
+    	handleFatal(err)
+
+    	defer res.Body.Close()
+
+		bin_data, err := io.ReadAll(res.Body)
+		handleGraceful(err)
+
+		photo, _ := jpeg.Decode(bytes.NewReader(bin_data))
+		cover.SetImage(photo).SetColors(tview.TrueColor).SetAspectRatio(1)
+		
 		updateTextView(player.Item.Name, song_name_text_view)
 		updateTextView(concatArtists(player.Item.Artists), artists_text_view)
 	}
 }
 
-func prev(curr_playing *spotify.CurrentlyPlaying, song_name_text_view *tview.TextView, artists_text_view *tview.TextView, client *spotify.Client) func() {
+func prev(curr_playing *spotify.CurrentlyPlaying, song_name_text_view *tview.TextView, artists_text_view *tview.TextView, cover *tview.Image, client *spotify.Client) func() {
 	return func() {
 		err := client.Previous()
 		handleGraceful(err)
 
 		player := refreshPlayer(curr_playing, client)
+
+		res, err := http.Get(player.Item.Album.Images[0].URL)//"https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
+    	handleFatal(err)
+
+    	defer res.Body.Close()
+
+		bin_data, err := io.ReadAll(res.Body)
+		handleGraceful(err)
+
+		photo, _ := jpeg.Decode(bytes.NewReader(bin_data))
+		cover.SetImage(photo).SetColors(tview.TrueColor).SetAspectRatio(1)
+		
 		updateTextView(player.Item.Name, song_name_text_view)
 		updateTextView(concatArtists(player.Item.Artists), artists_text_view)
 	}
@@ -284,43 +308,50 @@ func concatArtists(artists []spotify.SimpleArtist) string {
 }
 
 func main() {
-	// err := godotenv.Load(".env")
-	// handleFatal(err)
+	err := godotenv.Load(".env")
+	handleFatal(err)
 
-	// clientId := os.Getenv("SPOTIFY_ID")
-	// clientSecret := os.Getenv("SPOTIFY_SECRET")
+	clientId := os.Getenv("SPOTIFY_ID")
+	clientSecret := os.Getenv("SPOTIFY_SECRET")
 
-	// authResponse := make(chan AuthResponse, 2)
+	authResponse := make(chan AuthResponse, 2)
 
-	// go startServer(&clientId, &clientSecret, &authResponse)
+	go startServer(&clientId, &clientSecret, &authResponse)
 
-	// res, err := http.Get("http://localhost:8888/login")
-	// handleFatal(err)
+	res, err := http.Get("http://localhost:8888/login")
+	handleFatal(err)
 
-	// defer res.Body.Close()
+	defer res.Body.Close()
 
-	// token := <-authResponse
+	token := <-authResponse
 
-	// // Read empty value from chan to close program
-	// defer func() {
-	// 	authResponse<-AuthResponse{}
-	// 	<-authResponse
-	// }()
+	// Read empty value from chan to close program
+	defer func() {
+		authResponse<-AuthResponse{}
+		<-authResponse
+	}()
 
-	// ctx := context.Background()
-	
-	// client := spotify.NewClient(http_client)
+	ctx := context.Background()
 
-	// curr_playing, err := client.PlayerCurrentlyPlaying()
-	// handleFatal(err)
+	http_client := spotifyauth.Authenticator{}.Client(ctx, &oauth2.Token{
+		AccessToken: token.AccessToken,
+		TokenType: "Bearer",
+		RefreshToken: token.RefreshToken,
+	})
 
-	// artists_str := concatArtists(curr_playing.Item.Artists)
-	// song_name := curr_playing.Item.Name
+	client := spotify.NewClient(http_client)
 
-	curr_playing := &spotify.CurrentlyPlaying{}
-	client := spotify.Client{}
+	curr_playing, err := client.PlayerCurrentlyPlaying()
+	handleFatal(err)
 
-	res, err := http.Get("https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
+	artists_str := concatArtists(curr_playing.Item.Artists)
+	song_name := curr_playing.Item.Name
+	album_cover_url := curr_playing.Item.Album.Images[0].URL
+
+	// curr_playing := &spotify.CurrentlyPlaying{}
+	// client := spotify.Client{}
+
+	res, err = http.Get(album_cover_url)//"https://i.scdn.co/image/ab67616d0000b2732b9aca3204e667980ce6a939")
     handleFatal(err)
 
     defer res.Body.Close()
@@ -332,8 +363,8 @@ func main() {
 	photo, _ := jpeg.Decode(bytes.NewReader(bin_data))
 	cover.SetImage(photo).SetColors(tview.TrueColor).SetAspectRatio(1)
 
-	song_name := "King James"
-	artists_str := "Anderson .Paak"
+	// song_name := "King James"
+	// artists_str := "Anderson .Paak"
 
 	app := tview.NewApplication()
 
@@ -374,10 +405,10 @@ func main() {
 			// Do action for this key, set it to focused
 			switch focused_control {
 				case NEXT: {
-					next(curr_playing, song_name_text_view, artists_text_view, &client)()
+					next(curr_playing, song_name_text_view, artists_text_view, cover, &client)()
 				}
 				case PREV: {
-					prev(curr_playing, song_name_text_view, artists_text_view, &client)()
+					prev(curr_playing, song_name_text_view, artists_text_view, cover, &client)()
 				}
 				case PAUSE: {
 					pause(curr_playing, &client)()
@@ -419,6 +450,15 @@ func main() {
 			AddItem(
 				tview.NewFlex(),
 				1, 1, false,
+			).
+			AddItem(
+				tview.NewFlex().SetDirection(tview.FlexRowCSS).
+				AddItem(
+					// STOPPED HERE
+					tview.NewGrid(),
+					2, 1, false,
+				),
+				4, 1, false,
 			).
 			AddItem(
 				tview.NewFlex().SetDirection(tview.FlexColumnCSS).
