@@ -1,0 +1,1 @@
+ERROR: Mon Jul 21 02:31:36 2025 - Player command failed: Restriction violated

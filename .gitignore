@@ -1,2 +1,5 @@
 api
 .env
+archer-cli
+archer-server
+token
